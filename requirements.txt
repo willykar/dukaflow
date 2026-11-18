@@ -1,0 +1,32 @@
+# Python dependencies for DukaFlow.
+# Airflow is NOT listed: run it from its official docker-compose (IMPLEMENTATION.md, phase 4).
+# Lower bounds only; once everything works, pin with `pip freeze > requirements.lock`.
+
+# --- generator and loading (phase 1) ---
+python-dotenv>=1.0
+psycopg[binary]>=3.2
+requests>=2.32
+
+# --- streaming from Python: generator live mode, API alert stream (phases 2, 6) ---
+confluent-kafka>=2.4
+
+# --- batch layer (phase 3) ---
+pyspark>=3.5
+pandas>=2.2
+
+# --- warehouse (phase 4) ---
+snowflake-connector-python>=3.10
+dbt-snowflake>=1.8
+
+# --- AI (phase 5) ---
+pydantic>=2.7
+google-genai>=1.0
+pypdf>=4.0
+
+# --- API (phase 6) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# --- tests ---
+pytest>=8.0
+httpx>=0.27

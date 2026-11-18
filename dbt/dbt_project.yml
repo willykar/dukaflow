@@ -1,0 +1,19 @@
+name: dukaflow
+version: "1.0.0"
+config-version: 2
+profile: dukaflow
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+models:
+  dukaflow:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table
+    quarantine:
+      +materialized: table
+      +schema: quarantine
