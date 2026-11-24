@@ -35,8 +35,10 @@ CREATE TABLE IF NOT EXISTS product_prices (
     PRIMARY KEY (sku, valid_from)
 );
 
+-- Loyalty customers. The id comes from the till's loyalty list, so the same customer has the same id
+-- everywhere and loads stay idempotent.
 CREATE TABLE IF NOT EXISTS customers (
-    customer_id     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    customer_id     int PRIMARY KEY,
     display_name    text NOT NULL
 );
 
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS sales (
     sold_at         timestamptz NOT NULL,
     synced_at       timestamptz NOT NULL,
     payment_method  text NOT NULL CHECK (payment_method IN ('cash', 'mpesa')),
-    customer_id     bigint REFERENCES customers,            -- NULL for walk-in customers
+    customer_id     int REFERENCES customers,               -- NULL for walk-in customers
     CHECK (synced_at >= sold_at - interval '5 minutes')     -- allow small till clock skew
 );
 

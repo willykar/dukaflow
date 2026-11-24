@@ -18,9 +18,12 @@ Each topic you may be asked about, and where in this repo your own answer lives.
 | Pipeline design, orchestration (Q1, 2, 6) | `dags/`, `docs/architecture.md` |
 | Spark architecture, partitioning, shuffles, lazy evaluation (Q3–4) | `spark/jobs/build_sales.py`, plans in `docs/` |
 | Batch vs real-time (Q5) | `go/` speed layer vs `spark/` + `dags/` batch layer |
-| Kafka partitions, keys, consumer groups | `go/cmd/sales-consumer`, `go/cmd/stock-watch` |
-| At-least-once vs exactly-once | `go/cmd/sales-consumer`, `go/internal/store` |
-| Dead-letter queue | `go/internal/gateway`, `pos.sales.dlq` |
+| Kafka partitions, keys, consumer groups | `go/internal/bus` (key = shop_id), `go/cmd/sales-consumer` (3 readers, one group), `go/cmd/stock-watch` (second group) |
+| At-least-once vs exactly-once | `go/internal/consume` (commit after success), `go/internal/store` (`ON CONFLICT` on receipt_id) |
+| Dead-letter queue | `go/internal/gateway` (rejects), `go/internal/consume` (permanent failures), `go/cmd/admin dlq` |
+| Transient vs permanent failures, backoff | `go/internal/consume`, `store.IsPermanent` (SQLSTATE classes 22/23) |
+| Failure drills (DB down, Kafka down, restart) | `docs/architecture.md` phase 2 evidence, `docs/operations.md` |
+| API security (hashed keys, tenant isolation) | `go/internal/auth`, `go/internal/gateway` (401/403) |
 | Late-arriving data, event vs processing time | `generator/simulate.py`, `snowflake/setup.sql`, phase 4.2 |
 | Data quality, quarantine | `dbt/` tests and quarantine models |
 

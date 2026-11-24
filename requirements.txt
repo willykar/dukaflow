@@ -1,5 +1,5 @@
 # Python dependencies for DukaFlow.
-# Airflow is NOT listed: run it from its official docker-compose (IMPLEMENTATION.md, phase 4).
+# Airflow is NOT listed: run it from its official docker-compose (roadmap phase 4).
 # Lower bounds only; once everything works, pin with `pip freeze > requirements.lock`.
 
 # --- generator and loading (phase 1) ---

@@ -38,7 +38,7 @@ It is also a complete data engineering system, built as a **Lambda architecture*
 | Layer | Tools |
 |---|---|
 | Data source | Python generator simulating shops, tills, M-Pesa, offline syncs and bad records |
-| Ingestion API | Go (`net/http`) till gateway |
+| Ingestion API | Go (`net/http`) till gateway: per-shop API keys (hashed), request IDs, metrics |
 | Streaming | Apache Kafka (KRaft), Go consumer groups, dead-letter topic |
 | Transactional store | PostgreSQL (3NF), indexes checked with `EXPLAIN ANALYZE` |
 | Data lake | Local folder with bucket-style `raw/` and `curated/` zones (swappable for S3, GCS or R2) |
@@ -56,16 +56,16 @@ No AWS account and no paid services are needed to run it.
 ```
 dukaflow/
 ├── README.md
-├── IMPLEMENTATION.md          step-by-step build guide, start to finish
 ├── requirements.txt           Python dependencies (Airflow runs in Docker)
 ├── docker-compose.yml         local Kafka + PostgreSQL
 ├── .env.example               every setting the project reads
 ├── docs/
 │   ├── architecture.md        design, data flow, decisions and the reasons for them
-│   └── interview-map.md       each interview topic -> where it lives in this repo
+│   ├── interview-map.md       each interview topic -> where it lives in this repo
+│   └── operations.md          running it: onboarding a shop, the till API, metrics, failure modes
 ├── generator/                 synthetic shop data: sales, M-Pesa, late syncs, bad records
 ├── sql/postgres/              3NF schema + SQL drills
-├── go/                        till-gateway, sales-consumer, stock-watch
+├── go/                        till-gateway, sales-consumer, stock-watch, admin (keys, DLQ)
 ├── spark/jobs/                lake raw -> curated (Parquet)
 ├── snowflake/                 warehouse setup, internal stage, MERGE
 ├── dbt/                       staging, marts, tests
@@ -80,19 +80,31 @@ dukaflow/
 
 ```bash
 cp .env.example .env
-docker compose up -d                         # Kafka :9092, PostgreSQL :5432
+docker compose --profile app up -d --build   # Kafka, PostgreSQL (:5433), migrations, gateway (:8080), consumers
 python -m venv .venv && .venv/Scripts/activate   # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-psql "$POSTGRES_URL" -f sql/postgres/001_schema.sql
-python -m generator.cli --shops 5 --days 30 --out data/lake/raw   # history for the batch layer
-cd go && go run ./cmd/till-gateway           # live tills post here
+python -m generator.load_postgres --shops 3 --days 14             # shops, products, history and stock
+cd go && go run ./cmd/admin create-key -shop 1 -label "demo till" && cd ..   # prints dk_... once
+python -m generator.live --shop 1 --key dk_... --rate 5 --count 300          # live sales -> gateway
+cd go && go run ./cmd/admin dlq                                  # what was rejected, and why
 ```
 
-The full build, from an empty folder to a deployed demo, is in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+Then watch `http://localhost:8080/metrics`, `:9101/metrics` and `:9102/metrics`, or query PostgreSQL on
+port 5433. Running it day to day: [docs/operations.md](docs/operations.md).
 
-## Status
+## Roadmap
 
-Scaffolded. Progress is tracked phase by phase in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+| Phase | Scope | State |
+|---|---|---|
+| 1 | Data generator, 3NF PostgreSQL, SQL analytics | Done: idempotent loader; index cut a till's daily query from 7.0 ms to 0.10 ms |
+| 2 | Go till gateway, Kafka, idempotent consumer, dead-letter topic, stock alerts | Done: 600 live sales with a consumer restart -> stored exactly once; survives PostgreSQL and Kafka outages without losing a sale |
+| 3 | Data lake + PySpark | Next |
+| 4 | Snowflake + dbt + Airflow, late-arriving sales | Planned |
+| 5 | Gemini: M-Pesa statements, supplier invoices, "ask your shop" | Planned |
+| 6 | FastAPI + React dashboard | Planned |
+| 7 | CI, deployment, live demo | Planned |
+
+Measurements and design decisions: [docs/architecture.md](docs/architecture.md).
 
 ## Data and privacy
 

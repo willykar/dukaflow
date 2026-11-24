@@ -13,4 +13,10 @@ GROUP BY p.sku, p.name
 HAVING SUM(i.qty) > 100
 ORDER BY units DESC;
 
--- TODO: move SUM(i.qty) > 100 into WHERE, read the error, and write down why it fails.
+-- Moving the aggregate into WHERE fails:
+--   WHERE c.name = 'Beverages' AND SUM(i.qty) > 100
+--   ERROR:  aggregate functions are not allowed in WHERE
+-- Why: SQL evaluates FROM -> WHERE -> GROUP BY -> HAVING -> SELECT -> ORDER BY. WHERE runs on single rows
+-- before any groups exist, so there is no SUM to compare yet. HAVING runs after grouping.
+-- Rule of thumb: filter rows in WHERE whenever you can (less data to group); use HAVING only for conditions
+-- on aggregates.

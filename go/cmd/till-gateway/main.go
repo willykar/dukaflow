@@ -1,38 +1,64 @@
-// till-gateway receives sales from tills over HTTP and queues them on Kafka.
+// till-gateway receives sales from tills over HTTPS, authenticates each till by API key, and queues
+// valid sales on Kafka (invalid ones go to the dead-letter topic). See internal/gateway for the contract.
 package main
 
 import (
 	"context"
-	"log"
+	"errors"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/willykar/dukaflow/go/internal/auth"
+	"github.com/willykar/dukaflow/go/internal/bus"
+	"github.com/willykar/dukaflow/go/internal/config"
 	"github.com/willykar/dukaflow/go/internal/gateway"
-	"github.com/willykar/dukaflow/go/internal/sale"
+	"github.com/willykar/dukaflow/go/internal/metrics"
+	"github.com/willykar/dukaflow/go/internal/runtime"
+	"github.com/willykar/dukaflow/go/internal/store"
 )
 
-// logPublisher stands in for Kafka until phase 2.3. Replace it with a segmentio/kafka-go writer:
-// pos.sales keyed by shop_id, and pos.sales.dlq for rejects.
-type logPublisher struct{}
-
-func (logPublisher) PublishSale(_ context.Context, s sale.Sale) error {
-	log.Printf("queued receipt=%s shop=%d total=%d late=%s", s.ReceiptID, s.ShopID, s.TotalCents(), s.Lateness())
-	return nil
-}
-
-func (logPublisher) PublishDLQ(_ context.Context, payload []byte, reason string) error {
-	log.Printf("DLQ (%s): %s", reason, payload)
-	return nil
-}
-
 func main() {
-	addr := os.Getenv("GATEWAY_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	cfg := config.FromEnv()
+	log := runtime.Logger("till-gateway")
+	ctx, stop := runtime.SignalContext()
+	defer stop()
+
+	topics := bus.Topics{Sales: cfg.TopicSales, DLQ: cfg.TopicDLQ, Alerts: cfg.TopicAlerts}
+	if err := bus.EnsureTopics(ctx, cfg.Brokers, topics.Specs()); err != nil {
+		log.Error("kafka not reachable", "err", err)
+		os.Exit(1)
 	}
-	h := gateway.Handler{Pub: logPublisher{}, Now: time.Now}
-	srv := &http.Server{Addr: addr, Handler: h.Routes(), ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("till-gateway listening on %s", addr)
-	log.Fatal(srv.ListenAndServe())
+	db, err := store.Connect(ctx, cfg.PostgresURL)
+	if err != nil {
+		log.Error("postgres not reachable", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	prod := bus.NewProducer(cfg.Brokers, topics)
+	defer prod.Close()
+
+	h := gateway.Handler{
+		Pub:     prod,
+		Auth:    &auth.Cached{Store: db, TTL: cfg.AuthCache},
+		Now:     time.Now,
+		Log:     log,
+		Metrics: metrics.New(),
+		Ready: func(ctx context.Context) error {
+			return errors.Join(db.Ping(ctx), bus.Ping(ctx, cfg.Brokers))
+		},
+	}
+	srv := &http.Server{
+		Addr:              cfg.GatewayAddr,
+		Handler:           h.Routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := runtime.Serve(ctx, srv, log); err != nil {
+		log.Error("server stopped", "err", err)
+		os.Exit(1)
+	}
+	log.Info("stopped cleanly")
 }

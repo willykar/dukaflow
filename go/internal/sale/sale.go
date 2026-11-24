@@ -24,6 +24,7 @@ type Sale struct {
 	SoldAt        time.Time `json:"sold_at"`   // event time
 	SyncedAt      time.Time `json:"synced_at"` // processing time; days later for an offline till
 	PaymentMethod string    `json:"payment_method"`
+	CustomerID    *int      `json:"customer_id"` // nil for a walk-in customer
 	CustomerName  *string   `json:"customer_name"`
 	Items         []Item    `json:"items"`
 }

@@ -1,5 +1,10 @@
-# Local infrastructure: single-node Kafka (KRaft, no ZooKeeper) and PostgreSQL.
-# Airflow is added in phase 4 from its own official compose file.
+# DukaFlow local stack.
+#
+#   docker compose up -d                      infrastructure only: Kafka, PostgreSQL (+ migrations)
+#   docker compose --profile app up -d --build   everything: also the gateway and both consumers
+#
+# Host ports: Kafka 9092, PostgreSQL 5433 (5432 is often taken by a local PostgreSQL install),
+# gateway 8080, consumer metrics 9101 and 9102.
 services:
   kafka:
     image: apache/kafka:3.8.0
@@ -9,10 +14,12 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Two client listeners: localhost:9092 for programs on your machine, kafka:29092 for containers.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -20,18 +27,85 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 6
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
 
   postgres:
     image: postgres:16
     container_name: duka-postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: duka
       POSTGRES_PASSWORD: duka
       POSTGRES_DB: dukaflow
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U duka -d dukaflow"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Applies every migration in order on each `up`. The migrations are written to be re-runnable.
+  migrate:
+    image: postgres:16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./sql/postgres:/migrations:ro
+    environment:
+      PGPASSWORD: duka
+    entrypoint: ["sh", "-c", "for f in /migrations/0*.sql; do echo \"applying $$f\"; psql -h postgres -U duka -d dukaflow -v ON_ERROR_STOP=1 -q -f \"$$f\" || exit 1; done"]
+    restart: "no"
+
+  till-gateway:
+    profiles: ["app"]
+    build: ./go
+    image: dukaflow-go
+    command: ["till-gateway"]
+    ports:
+      - "8080:8080"
+    environment: &app-env
+      KAFKA_BROKERS: kafka:29092
+      POSTGRES_URL: postgresql://duka:duka@postgres:5432/dukaflow
+    depends_on: &app-deps
+      kafka:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  sales-consumer:
+    profiles: ["app"]
+    image: dukaflow-go
+    command: ["sales-consumer"]
+    ports:
+      - "9101:9101"
+    environment:
+      <<: *app-env
+      METRICS_ADDR: ":9101"
+    depends_on: *app-deps
+    restart: unless-stopped
+
+  stock-watch:
+    profiles: ["app"]
+    image: dukaflow-go
+    command: ["stock-watch"]
+    ports:
+      - "9102:9102"
+    environment:
+      <<: *app-env
+      METRICS_ADDR: ":9102"
+    depends_on: *app-deps
+    restart: unless-stopped
 
 volumes:
   pgdata:
+
+
+
